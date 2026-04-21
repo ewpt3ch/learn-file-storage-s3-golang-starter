@@ -4,7 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -31,8 +34,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
-	// TODO: implement the upload here
-
 	const maxMemory = 10 << 20
 	err = r.ParseMultipartForm(maxMemory)
 	if err != nil {
@@ -46,10 +47,20 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	mediaType := imgHeader.Header.Get("Content-Type")
-	imageData, err := io.ReadAll(imgFile)
+	mediaType, _, err := mime.ParseMediaType(imgHeader.Header.Get("Content-Type"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "failed read image", err)
+		respondWithError(w, http.StatusInternalServerError, "failed to get mediatype", err)
+		return
+	}
+
+	if mediaType != "image/jpeg" && mediaType != "image/png" {
+		respondWithError(w, http.StatusUnsupportedMediaType, "only support .png and .jpeg", err)
+		return
+	}
+
+	mediaExt, err := mime.ExtensionsByType(imgHeader.Header.Get("Content-Type"))
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed to get extension", err)
 		return
 	}
 
@@ -68,13 +79,24 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	imgThumbnail := thumbnail{
-		data:      imageData,
-		mediaType: mediaType,
+	imgFileName := fmt.Sprintf("%s%s", videoIDString, mediaExt[0])
+
+	imgPath := filepath.Join(cfg.assetsRoot, imgFileName)
+	fmt.Print(imgPath)
+	outfile, err := os.Create(imgPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "failed create img file", err)
+		return
+	}
+	defer outfile.Close()
+
+	_, err = io.Copy(outfile, imgFile)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "issue writing img to file", err)
+		return
 	}
 
-	videoThumbnails[videoID] = imgThumbnail
-	thumburl := fmt.Sprintf("http://localhost:%v/api/thumbnails/%v", cfg.port, videoIDString)
+	thumburl := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, imgFileName)
 
 	dbVideo.ThumbnailURL = &thumburl
 
