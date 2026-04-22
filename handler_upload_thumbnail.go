@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -79,7 +81,10 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	imgFileName := fmt.Sprintf("%s%s", videoIDString, mediaExt[0])
+	randSrc := make([]byte, 32)
+	rand.Read(randSrc)
+	randFileString := base64.RawURLEncoding.EncodeToString(randSrc)
+	imgFileName := fmt.Sprintf("%s%s", randFileString, mediaExt[0])
 
 	imgPath := filepath.Join(cfg.assetsRoot, imgFileName)
 	fmt.Print(imgPath)
