@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -86,6 +89,12 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aspect, err := getVideoAspectRatio(tmpFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "aspect ratio", err)
+		return
+	}
+
 	_, err = tmpFile.Seek(0, io.SeekStart)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "failed seek", err)
@@ -95,7 +104,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	randSrc := make([]byte, 32)
 	rand.Read(randSrc)
 	key := base64.RawURLEncoding.EncodeToString(randSrc)
-	key = fmt.Sprintf("%s.mp4", key)
+	key = fmt.Sprintf("%s/%s.mp4", aspect, key)
 
 	cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
@@ -113,4 +122,43 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, dbVideo)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	if len(filePath) == 0 {
+		return "", fmt.Errorf("no path given")
+	}
+
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	jsonBuffer := new(bytes.Buffer)
+	cmd.Stdout = jsonBuffer
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("failed to run ffprobe: %v", err)
+	}
+
+	type videoData struct {
+		Streams []struct {
+			Aspect string `json:"display_aspect_ratio"`
+		} `json:"streams"`
+	}
+
+	var jsonData videoData
+	decoder := json.NewDecoder(jsonBuffer)
+	err = decoder.Decode(&jsonData)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode json: %v", err)
+	}
+
+	aspect := jsonData.Streams[0].Aspect
+	fmt.Println(aspect)
+	switch aspect {
+	case "16:9":
+		return "landscape", nil
+	case "9:16":
+		return "portrait", nil
+	default:
+		return "other", nil
+	}
+
 }
